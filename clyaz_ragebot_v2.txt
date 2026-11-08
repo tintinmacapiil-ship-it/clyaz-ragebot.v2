@@ -1,0 +1,1416 @@
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║           CLYAZ RAGEBOT v2  —  w7w7 Style                   ║
+-- ║  Void Spam | Fake Pos | Kick | TP | Silent Aim | Backtrack   ║
+-- ║  Anti-UE | Skybox | Stretch | 380px UI | Sharp Edges         ║
+-- ║  Toggle UI: RightShift                                        ║
+-- ╚══════════════════════════════════════════════════════════════╝
+
+-- ═══════════════════════════════════════════════════════════════
+--  SERVICES
+-- ═══════════════════════════════════════════════════════════════
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService     = game:GetService("TweenService")
+local Lighting         = game:GetService("Lighting")
+local Workspace        = game:GetService("Workspace")
+local CoreGui          = game:GetService("CoreGui")
+
+local Camera      = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local Mouse       = LocalPlayer:GetMouse()
+
+-- ═══════════════════════════════════════════════════════════════
+--  CLEANUP OLD GUI
+-- ═══════════════════════════════════════════════════════════════
+if CoreGui:FindFirstChild("ClyazRageV2") then
+    CoreGui:FindFirstChild("ClyazRageV2"):Destroy()
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  CONFIG
+-- ═══════════════════════════════════════════════════════════════
+local Config = {
+    -- Silent Aim
+    SilentAim        = false,
+    TeamCheck        = true,
+    WallCheck        = true,
+    FOVRadius        = 380,
+    TargetPart       = "Head",
+
+    -- Auto Fire
+    AutoFire         = false,
+    DoubleTap        = true,
+    FireDelay        = 0.013,
+    ShotsPerCycle    = 2,
+
+    -- Void / Fake Position (K8X Flicker)
+    VoidEnabled      = false,
+    VoidRate         = 0.05,
+
+    -- Enemy Kick (void all enemies + projectiles)
+    KickEnabled      = false,
+
+    -- TP Rage
+    TPEnabled        = false,
+    TPInterval       = 1.2,
+
+    -- Backtrack
+    BacktrackEnabled = false,
+    BacktrackDuration= 0.18,
+
+    -- Anti-UE Counter
+    AntiUEEnabled    = false,
+    AntiUEY          = 500,
+    AntiUECooldown   = 0.2,
+
+    -- Skybox
+    SkyboxMode       = "Default",
+
+    -- Stretch Screen
+    StretchEnabled   = false,
+    StretchRatio     = 0.75,
+
+    -- Misc
+    ShowFOVCircle    = true,
+    ShowTargetHUD    = true,
+    ShowYCoord       = true,
+}
+
+-- ═══════════════════════════════════════════════════════════════
+--  INTERNAL STATE
+-- ═══════════════════════════════════════════════════════════════
+local AimTarget      = nil
+local AimTargetPart  = nil
+local AimTargetPos   = nil
+local Projectiles    = {}
+local VoidFlip       = true
+local VoidLastPos    = nil
+local TPTarget       = nil
+local BacktrackCache = {}  -- [player] = { {pos, tick}, ... }
+local LastFireTick   = 0
+local OriginalSky    = nil
+local StretchConn    = nil
+local AntiUEConn     = nil
+
+-- Void position (classic 9000 for kick, massive for self)
+local VOID_KICK = Vector3.new(9000, 9000, 9000)
+
+-- ═══════════════════════════════════════════════════════════════
+--  SKYBOX DATA (Nebula + Night)
+-- ═══════════════════════════════════════════════════════════════
+local SkyboxPresets = {
+    Nebula = {
+        SkyboxBk = "rbxassetid://1684881025",
+        SkyboxDn = "rbxassetid://1684881025",
+        SkyboxFt = "rbxassetid://1684881025",
+        SkyboxLf = "rbxassetid://1684881025",
+        SkyboxRt = "rbxassetid://1684881025",
+        SkyboxUp = "rbxassetid://1684881025",
+        ClockTime        = 0,
+        Brightness       = 0.5,
+        Ambient          = Color3.fromRGB(40, 10, 60),
+        OutdoorAmbient   = Color3.fromRGB(50, 10, 80),
+        FogColor         = Color3.fromRGB(15, 5, 25),
+        FogEnd           = 500,
+        FogStart         = 300,
+    },
+    Night = {
+        SkyboxBk = "rbxassetid://6038107624",
+        SkyboxDn = "rbxassetid://6038107624",
+        SkyboxFt = "rbxassetid://6038107624",
+        SkyboxLf = "rbxassetid://6038107624",
+        SkyboxRt = "rbxassetid://6038107624",
+        SkyboxUp = "rbxassetid://6038107624",
+        StarCount        = 3000,
+        ClockTime        = 0,
+        Brightness       = 0.3,
+        Ambient          = Color3.fromRGB(10, 10, 30),
+        OutdoorAmbient   = Color3.fromRGB(15, 15, 40),
+        FogColor         = Color3.fromRGB(5, 5, 15),
+        FogEnd           = 1000,
+        FogStart         = 600,
+    },
+}
+
+local function SaveOriginalSky()
+    if OriginalSky then return end
+    OriginalSky = {
+        ClockTime      = Lighting.ClockTime,
+        Brightness     = Lighting.Brightness,
+        Ambient        = Lighting.Ambient,
+        OutdoorAmbient = Lighting.OutdoorAmbient,
+        FogColor       = Lighting.FogColor,
+        FogEnd         = Lighting.FogEnd,
+        FogStart       = Lighting.FogStart,
+    }
+    local sky = Lighting:FindFirstChildOfClass("Sky")
+    if sky then
+        OriginalSky.SkyboxBk = sky.SkyboxBk
+        OriginalSky.SkyboxDn = sky.SkyboxDn
+        OriginalSky.SkyboxFt = sky.SkyboxFt
+        OriginalSky.SkyboxLf = sky.SkyboxLf
+        OriginalSky.SkyboxRt = sky.SkyboxRt
+        OriginalSky.SkyboxUp = sky.SkyboxUp
+        OriginalSky.StarCount= sky.StarCount
+    end
+end
+
+local function ApplySkybox(preset)
+    SaveOriginalSky()
+    local data = SkyboxPresets[preset]
+    if not data then return end
+
+    Lighting.ClockTime      = data.ClockTime      or Lighting.ClockTime
+    Lighting.Brightness     = data.Brightness     or Lighting.Brightness
+    Lighting.Ambient        = data.Ambient        or Lighting.Ambient
+    Lighting.OutdoorAmbient = data.OutdoorAmbient or Lighting.OutdoorAmbient
+    Lighting.FogColor       = data.FogColor       or Lighting.FogColor
+    Lighting.FogEnd         = data.FogEnd         or Lighting.FogEnd
+    Lighting.FogStart       = data.FogStart       or Lighting.FogStart
+
+    local sky = Lighting:FindFirstChildOfClass("Sky") or Instance.new("Sky", Lighting)
+    sky.SkyboxBk = data.SkyboxBk or sky.SkyboxBk
+    sky.SkyboxDn = data.SkyboxDn or sky.SkyboxDn
+    sky.SkyboxFt = data.SkyboxFt or sky.SkyboxFt
+    sky.SkyboxLf = data.SkyboxLf or sky.SkyboxLf
+    sky.SkyboxRt = data.SkyboxRt or sky.SkyboxRt
+    sky.SkyboxUp = data.SkyboxUp or sky.SkyboxUp
+    if data.StarCount then sky.StarCount = data.StarCount end
+
+    -- Post-process for Nebula: add BloomEffect
+    if preset == "Nebula" then
+        local bloom = Lighting:FindFirstChildOfClass("BloomEffect")
+                   or Instance.new("BloomEffect", Lighting)
+        bloom.Intensity  = 1.2
+        bloom.Size       = 24
+        bloom.Threshold  = 0.8
+    end
+end
+
+local function ResetSkybox()
+    if not OriginalSky then return end
+    Lighting.ClockTime      = OriginalSky.ClockTime
+    Lighting.Brightness     = OriginalSky.Brightness
+    Lighting.Ambient        = OriginalSky.Ambient
+    Lighting.OutdoorAmbient = OriginalSky.OutdoorAmbient
+    Lighting.FogColor       = OriginalSky.FogColor
+    Lighting.FogEnd         = OriginalSky.FogEnd
+    Lighting.FogStart       = OriginalSky.FogStart
+    local sky = Lighting:FindFirstChildOfClass("Sky")
+    if sky and OriginalSky.SkyboxBk then
+        sky.SkyboxBk = OriginalSky.SkyboxBk
+        sky.SkyboxDn = OriginalSky.SkyboxDn
+        sky.SkyboxFt = OriginalSky.SkyboxFt
+        sky.SkyboxLf = OriginalSky.SkyboxLf
+        sky.SkyboxRt = OriginalSky.SkyboxRt
+        sky.SkyboxUp = OriginalSky.SkyboxUp
+        sky.StarCount= OriginalSky.StarCount
+    end
+    local bloom = Lighting:FindFirstChildOfClass("BloomEffect")
+    if bloom then bloom:Destroy() end
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  STRETCH SCREEN (CFrame matrix column squish)
+-- ═══════════════════════════════════════════════════════════════
+local function EnableStretch()
+    if StretchConn then StretchConn:Disconnect() end
+    StretchConn = RunService.RenderStepped:Connect(function()
+        if not Config.StretchEnabled then return end
+        local cf = Camera.CFrame
+        local ratio = Config.StretchRatio
+        Camera.CFrame = CFrame.fromMatrix(
+            cf.Position,
+            cf.XVector * ratio,
+            cf.YVector,
+            cf.ZVector
+        )
+    end)
+end
+
+local function DisableStretch()
+    if StretchConn then StretchConn:Disconnect(); StretchConn = nil end
+    Camera.FieldOfView = 70
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  PROJECTILE TRACKING (for Kick mechanic)
+-- ═══════════════════════════════════════════════════════════════
+Workspace.ChildAdded:Connect(function(obj)
+    if obj:IsA("BasePart") then
+        task.wait(0.08)
+        if obj.Parent and (
+           obj.Name == "CoreProjectile" or
+           obj.Name:lower():find("bullet") or
+           obj.Name:lower():find("proj") or
+           (obj.AssemblyLinearVelocity and obj.AssemblyLinearVelocity.Magnitude > 50)
+        ) then
+            Projectiles[obj] = true
+        end
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+--  HELPERS
+-- ═══════════════════════════════════════════════════════════════
+local function IsSameTeam(player)
+    if not LocalPlayer.Team or not player.Team then return false end
+    return LocalPlayer.Team == player.Team
+end
+
+local function IsVisible(part)
+    local char    = LocalPlayer.Character
+    local origin  = Camera.CFrame.Position
+    local dir     = part.Position - origin
+    local rp      = RaycastParams.new()
+    rp.FilterDescendantsInstances = {char or {}, part.Parent}
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+    local result  = Workspace:Raycast(origin, dir.Unit * dir.Magnitude, rp)
+    return result == nil
+end
+
+local function GetBestPart(char)
+    local partOrder = {
+        Config.TargetPart ~= "Auto" and Config.TargetPart or nil,
+        "Head", "HumanoidRootPart", "UpperTorso", "LowerTorso",
+        "RightUpperArm", "LeftUpperArm",
+    }
+    for _, pname in ipairs(partOrder) do
+        if pname then
+            local p = char:FindFirstChild(pname)
+            if p then
+                if not Config.WallCheck or IsVisible(p) then
+                    return p
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  BACKTRACK SYSTEM (ring buffer, 180ms history)
+-- ═══════════════════════════════════════════════════════════════
+local function StoreBacktrackFrame()
+    if not Config.BacktrackEnabled then return end
+    local now = tick()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+        local char = player.Character
+        if not char then continue end
+        if not BacktrackCache[player] then BacktrackCache[player] = {} end
+        local cache = BacktrackCache[player]
+
+        local parts = {"Head","HumanoidRootPart","UpperTorso"}
+        local frame = {t = now, positions = {}}
+        for _, pname in ipairs(parts) do
+            local p = char:FindFirstChild(pname)
+            if p then frame.positions[pname] = p.Position end
+        end
+        table.insert(cache, 1, frame)
+
+        -- Prune frames older than BacktrackDuration
+        while #cache > 0 and (now - cache[#cache].t) > Config.BacktrackDuration do
+            table.remove(cache)
+        end
+    end
+end
+
+local function GetBacktrackPos(player)
+    local cache = BacktrackCache[player]
+    if not cache or #cache == 0 then return nil end
+    local now = tick()
+    -- Newest to oldest, find first frame where head was visible
+    for _, frame in ipairs(cache) do
+        if (now - frame.t) <= Config.BacktrackDuration then
+            local pos = frame.positions[Config.TargetPart] or frame.positions["Head"]
+            if pos then
+                -- Quick visibility check at cached position (approximate)
+                local origin = Camera.CFrame.Position
+                local dir    = pos - origin
+                local rp     = RaycastParams.new()
+                rp.FilterDescendantsInstances = {LocalPlayer.Character or {}}
+                rp.FilterType = Enum.RaycastFilterType.Exclude
+                local res = Workspace:Raycast(origin, dir.Unit * math.min(dir.Magnitude, 1000), rp)
+                if not res then return pos end
+            end
+        end
+    end
+    return nil
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  TARGET ACQUISITION
+-- ═══════════════════════════════════════════════════════════════
+local function FindTarget()
+    if not Config.SilentAim and not Config.AutoFire then
+        AimTarget = nil; AimTargetPart = nil; AimTargetPos = nil
+        return
+    end
+
+    local mousePos = UserInputService:GetMouseLocation()
+    local bestDist = math.huge
+    local bestPlayer, bestPart = nil, nil
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+        if Config.TeamCheck and IsSameTeam(player) then continue end
+
+        local char = player.Character
+        if not char then continue end
+        local hum  = char:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+
+        local part = GetBestPart(char)
+        if not part then continue end
+
+        local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+        if not onScreen or sp.Z < 0 then continue end
+
+        local screenDist = (Vector2.new(sp.X, sp.Y) - mousePos).Magnitude
+        if screenDist <= Config.FOVRadius and screenDist < bestDist then
+            bestDist   = screenDist
+            bestPlayer = player
+            bestPart   = part
+        end
+    end
+
+    AimTarget    = bestPlayer
+    AimTargetPart= bestPart
+
+    if bestPlayer then
+        -- Try backtrack first, fall back to real position
+        if Config.BacktrackEnabled then
+            local btPos = GetBacktrackPos(bestPlayer)
+            AimTargetPos = btPos or (bestPart and bestPart.Position)
+        else
+            AimTargetPos = bestPart and bestPart.Position
+        end
+    else
+        AimTargetPos = nil
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  SILENT AIM HOOK  (hookmetamethod)
+-- ═══════════════════════════════════════════════════════════════
+if hookmetamethod then
+    local oldNI = hookmetamethod(game, "__index", function(self, key)
+        if not checkcaller() and self == Mouse then
+            if key == "Hit" and Config.SilentAim and AimTargetPos then
+                return CFrame.new(AimTargetPos)
+            elseif key == "Target" and Config.SilentAim and AimTargetPart then
+                return AimTargetPart
+            end
+        end
+        return oldNI(self, key)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  FIRE ENGINE
+-- ═══════════════════════════════════════════════════════════════
+local function FireSingle()
+    mouse1press()
+    task.wait(Config.FireDelay)
+    mouse1release()
+end
+
+local function FireDoubleTap()
+    -- Two shots in rapid succession — abuses lag comp window
+    for i = 1, Config.ShotsPerCycle do
+        mouse1press()
+        task.wait(0.013)
+        mouse1release()
+        task.wait(0.013)
+    end
+end
+
+local FireEngineActive = false
+local function RunFireEngine()
+    if FireEngineActive then return end
+    FireEngineActive = true
+    task.spawn(function()
+        while Config.AutoFire and AimTarget do
+            if Config.DoubleTap then
+                FireDoubleTap()
+            else
+                FireSingle()
+            end
+            task.wait(Config.FireDelay)
+        end
+        FireEngineActive = false
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════
+--  VOID / FAKE POSITION  (K8X Flicker — ported from w7w7)
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    while true do
+        if Config.VoidEnabled then
+            pcall(function()
+                local char = LocalPlayer.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    -- Save real position before first void
+                    if not VoidLastPos then VoidLastPos = hrp.CFrame end
+
+                    -- K8X core: massive alternating random coords
+                    local min_v, max_v = 10000000000, 100000000000
+                    local rx = math.random(min_v, max_v)
+                    local ry = math.random(min_v, max_v)
+                    local rz = math.random(min_v, max_v)
+                    if not VoidFlip then rx=-rx; ry=-ry; rz=-rz end
+                    VoidFlip = not VoidFlip
+
+                    hrp.CFrame = CFrame.new(rx, ry, rz)
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                end
+            end)
+        else
+            VoidFlip = true
+        end
+        task.wait(Config.VoidRate)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+--  ENEMY KICK + PROJECTILE DEFLECTION  (ported from w7w7)
+-- ═══════════════════════════════════════════════════════════════
+RunService.Heartbeat:Connect(function()
+    -- Kick: void all enemies and their projectiles
+    if Config.KickEnabled then
+        pcall(function()
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and player.Character then
+                    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        hrp.CFrame = CFrame.new(VOID_KICK)
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                    end
+                end
+            end
+        end)
+        pcall(function()
+            for proj in pairs(Projectiles) do
+                if proj and proj.Parent then
+                    proj.CFrame = CFrame.new(VOID_KICK)
+                    proj.AssemblyLinearVelocity = Vector3.zero
+                else
+                    Projectiles[proj] = nil
+                end
+            end
+        end)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+--  TP RAGE  (cycle teleport to players — from w7w7)
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    while true do
+        if Config.TPEnabled then
+            pcall(function()
+                local myChar = LocalPlayer.Character
+                local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+                if not myHRP then return end
+
+                local targets = {}
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= LocalPlayer then
+                        if not Config.TeamCheck or not IsSameTeam(p) then
+                            if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                                table.insert(targets, p)
+                            end
+                        end
+                    end
+                end
+
+                for _, target in ipairs(targets) do
+                    if not Config.TPEnabled then break end
+                    local tHRP = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+                    if tHRP then
+                        myHRP.CFrame = tHRP.CFrame * CFrame.new(0, 0, 2.5)
+                        myHRP.AssemblyLinearVelocity = Vector3.zero
+                        task.wait(Config.TPInterval)
+                    end
+                end
+            end)
+        end
+        task.wait(0.4)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+--  ANTI-UE COUNTER  (Y-boost from BrokeCheat counter)
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    while true do
+        if Config.AntiUEEnabled then
+            pcall(function()
+                local char = LocalPlayer.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    hrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, Config.AntiUEY, 0))
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                end
+            end)
+        end
+        task.wait(Config.AntiUECooldown)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+--  DRAWINGS
+-- ═══════════════════════════════════════════════════════════════
+local FovCircle = Drawing.new("Circle")
+FovCircle.Filled       = false
+FovCircle.Thickness    = 1
+FovCircle.Transparency = 1
+FovCircle.NumSides     = 64
+FovCircle.Visible      = false
+
+-- Target HUD drawings
+local HUD = {
+    Box      = Drawing.new("Square"),
+    Name     = Drawing.new("Text"),
+    HPBg     = Drawing.new("Square"),
+    HPFill   = Drawing.new("Square"),
+    Distance = Drawing.new("Text"),
+    LockLine = Drawing.new("Line"),
+}
+
+HUD.Box.Filled        = false
+HUD.Box.Thickness     = 1
+HUD.Box.Visible       = false
+
+HUD.Name.Size         = 13
+HUD.Name.Center       = true
+HUD.Name.Outline      = true
+HUD.Name.OutlineColor = Color3.new(0,0,0)
+HUD.Name.Font         = Drawing.Fonts.Gotham
+HUD.Name.Visible      = false
+
+HUD.HPBg.Filled       = true
+HUD.HPBg.Color        = Color3.fromRGB(30,30,30)
+HUD.HPBg.Transparency = 0.6
+HUD.HPBg.Visible      = false
+
+HUD.HPFill.Filled     = true
+HUD.HPFill.Visible    = false
+
+HUD.Distance.Size     = 11
+HUD.Distance.Center   = true
+HUD.Distance.Outline  = true
+HUD.Distance.OutlineColor = Color3.new(0,0,0)
+HUD.Distance.Font     = Drawing.Fonts.Gotham
+HUD.Distance.Visible  = false
+
+HUD.LockLine.Thickness  = 1
+HUD.LockLine.Transparency= 0.7
+HUD.LockLine.Visible    = false
+
+local YLabel = Drawing.new("Text")
+YLabel.Size       = 13
+YLabel.Color      = Color3.fromRGB(0, 220, 180)
+YLabel.Outline    = true
+YLabel.OutlineColor= Color3.new(0,0,0)
+YLabel.Font       = Drawing.Fonts.Gotham
+YLabel.Visible    = true
+YLabel.Position   = Vector2.new(10, 50)
+YLabel.Text       = "Y: 0"
+
+-- ═══════════════════════════════════════════════════════════════
+--  MASTER RENDER LOOP
+-- ═══════════════════════════════════════════════════════════════
+local frameCount = 0
+RunService.RenderStepped:Connect(function(dt)
+    frameCount = frameCount + 1
+
+    -- Target scan every frame
+    FindTarget()
+
+    -- Backtrack storage every frame
+    if Config.BacktrackEnabled then
+        StoreBacktrackFrame()
+    end
+
+    -- Auto fire when target locked
+    if Config.AutoFire and AimTarget then
+        RunFireEngine()
+    end
+
+    -- FOV circle
+    if Config.ShowFOVCircle then
+        FovCircle.Visible  = true
+        FovCircle.Position = UserInputService:GetMouseLocation()
+        FovCircle.Radius   = Config.FOVRadius
+        FovCircle.Color    = AimTarget
+            and Color3.fromRGB(255, 60, 60)
+            or  Color3.fromRGB(180, 180, 200)
+    else
+        FovCircle.Visible = false
+    end
+
+    -- Target HUD
+    if Config.ShowTargetHUD and AimTarget and AimTargetPart then
+        local char   = AimTarget.Character
+        local hum    = char and char:FindFirstChildOfClass("Humanoid")
+        local hp     = hum and hum.Health    or 0
+        local maxHp  = hum and hum.MaxHealth or 100
+        local hpPct  = math.clamp(hp / math.max(maxHp, 1), 0, 1)
+        local hpColor = Color3.fromRGB(
+            math.floor(255 * (1 - hpPct)),
+            math.floor(255 * hpPct),
+            50
+        )
+
+        local head  = char:FindFirstChild("Head") or AimTargetPart
+        local root  = char:FindFirstChild("HumanoidRootPart") or AimTargetPart
+        local topPos= head.Position + Vector3.new(0, 0.7, 0)
+        local botPos= root.Position - Vector3.new(0, 2.8, 0)
+
+        local topSP, topOn  = Camera:WorldToViewportPoint(topPos)
+        local botSP, botOn  = Camera:WorldToViewportPoint(botPos)
+        local vp            = Camera.ViewportSize
+        local centerX       = (topSP.X + botSP.X) * 0.5
+
+        if topOn or botOn then
+            local minY   = math.min(topSP.Y, botSP.Y)
+            local maxY   = math.max(topSP.Y, botSP.Y)
+            local height = maxY - minY
+            local width  = height * 0.5
+            local bx     = centerX - width * 0.5
+
+            HUD.Box.Visible  = true
+            HUD.Box.Position = Vector2.new(bx, minY)
+            HUD.Box.Size     = Vector2.new(width, height)
+            HUD.Box.Color    = Color3.fromRGB(255, 60, 60)
+
+            HUD.Name.Visible  = true
+            HUD.Name.Position = Vector2.new(centerX, minY - 16)
+            HUD.Name.Text     = AimTarget.Name
+            HUD.Name.Color    = Color3.new(1, 1, 1)
+
+            local barW = width - 4
+            local barH = 4
+            local barX = bx + 2
+            local barY = maxY + 4
+            HUD.HPBg.Visible  = true
+            HUD.HPBg.Position = Vector2.new(barX, barY)
+            HUD.HPBg.Size     = Vector2.new(barW, barH)
+
+            HUD.HPFill.Visible  = true
+            HUD.HPFill.Position = Vector2.new(barX, barY)
+            HUD.HPFill.Size     = Vector2.new(barW * hpPct, barH)
+            HUD.HPFill.Color    = hpColor
+
+            local worldDist = (root.Position - Camera.CFrame.Position).Magnitude
+            HUD.Distance.Visible  = true
+            HUD.Distance.Position = Vector2.new(centerX, barY + 8)
+            HUD.Distance.Text     = string.format("%.0fm", worldDist)
+            HUD.Distance.Color    = Color3.fromRGB(180, 180, 200)
+
+            HUD.LockLine.Visible = true
+            HUD.LockLine.From    = Vector2.new(vp.X * 0.5, vp.Y)
+            HUD.LockLine.To      = Vector2.new(centerX, maxY)
+            HUD.LockLine.Color   = Color3.fromRGB(255, 60, 60)
+        else
+            HUD.Box.Visible      = false
+            HUD.Name.Visible     = false
+            HUD.HPBg.Visible     = false
+            HUD.HPFill.Visible   = false
+            HUD.Distance.Visible = false
+            HUD.LockLine.Visible = false
+        end
+    else
+        HUD.Box.Visible      = false
+        HUD.Name.Visible     = false
+        HUD.HPBg.Visible     = false
+        HUD.HPFill.Visible   = false
+        HUD.Distance.Visible = false
+        HUD.LockLine.Visible = false
+    end
+
+    -- Y coord display
+    if Config.ShowYCoord then
+        local char = LocalPlayer.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        local y    = hrp and math.floor(hrp.Position.Y) or 0
+        YLabel.Text    = "Y: " .. y
+        YLabel.Visible = true
+    else
+        YLabel.Visible = false
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+--  UI  (380px wide | sharp rectangle | zero border radius)
+-- ═══════════════════════════════════════════════════════════════
+local CL = {
+    BG     = Color3.fromRGB(14, 11, 20),
+    PANEL  = Color3.fromRGB(20, 16, 30),
+    BORDER = Color3.fromRGB(80, 50, 130),
+    ACC    = Color3.fromRGB(150, 80, 255),
+    ACCLIT = Color3.fromRGB(180, 110, 255),
+    TEXT   = Color3.fromRGB(230, 220, 245),
+    DIM    = Color3.fromRGB(120, 100, 155),
+    ELEM   = Color3.fromRGB(22, 17, 34),
+    ELEM2  = Color3.fromRGB(30, 23, 46),
+    GREEN  = Color3.fromRGB(50, 220, 85),
+    RED    = Color3.fromRGB(220, 55, 55),
+    YELLOW = Color3.fromRGB(240, 190, 50),
+}
+
+local function MkStroke(inst, col, t)
+    local s = Instance.new("UIStroke", inst)
+    s.Color = col; s.Thickness = t or 1
+    return s
+end
+local function Tw(obj, props, t)
+    TweenService:Create(obj, TweenInfo.new(t or 0.1), props):Play()
+end
+local function MkLabel(parent, text, x, y, w, h, size, color, font, xa)
+    local l = Instance.new("TextLabel", parent)
+    l.Size               = UDim2.fromOffset(w, h)
+    l.Position           = UDim2.fromOffset(x, y)
+    l.BackgroundTransparency = 1
+    l.Text               = text
+    l.TextColor3         = color or CL.TEXT
+    l.TextSize           = size or 12
+    l.Font               = font or Enum.Font.GothamBold
+    l.TextXAlignment     = xa or Enum.TextXAlignment.Left
+    l.BorderSizePixel    = 0
+    return l
+end
+
+-- ─── ScreenGui ───────────────────────────────────────────────
+local GUI = Instance.new("ScreenGui")
+GUI.Name              = "ClyazRageV2"
+GUI.ResetOnSpawn      = false
+GUI.IgnoreGuiInset    = true
+GUI.DisplayOrder      = 999
+GUI.ZIndexBehavior    = Enum.ZIndexBehavior.Sibling
+pcall(function() GUI.Parent = CoreGui end)
+if not GUI.Parent then GUI.Parent = LocalPlayer.PlayerGui end
+
+-- ─── Toggle Button (draggable, sharp) ────────────────────────
+local TogBtn = Instance.new("Frame", GUI)
+TogBtn.Size             = UDim2.fromOffset(52, 52)
+TogBtn.Position         = UDim2.new(0, 14, 0.5, -26)
+TogBtn.BackgroundColor3 = CL.PANEL
+TogBtn.BorderSizePixel  = 0  -- sharp
+MkStroke(TogBtn, CL.BORDER, 1)
+
+local TogIcon = Instance.new("TextLabel", TogBtn)
+TogIcon.Size            = UDim2.new(1, 0, 0, 30)
+TogIcon.Position        = UDim2.new(0, 0, 0, 4)
+TogIcon.BackgroundTransparency = 1
+TogIcon.Text            = "⬡"
+TogIcon.TextColor3      = CL.ACC
+TogIcon.TextSize        = 22
+TogIcon.Font            = Enum.Font.GothamBold
+TogIcon.TextXAlignment  = Enum.TextXAlignment.Center
+TogIcon.BorderSizePixel = 0
+
+local TogLbl = Instance.new("TextLabel", TogBtn)
+TogLbl.Size            = UDim2.new(1, 0, 0, 13)
+TogLbl.Position        = UDim2.new(0, 0, 1, -15)
+TogLbl.BackgroundTransparency = 1
+TogLbl.Text            = "CLYAZ"
+TogLbl.TextColor3      = CL.DIM
+TogLbl.TextSize        = 8
+TogLbl.Font            = Enum.Font.GothamBold
+TogLbl.TextXAlignment  = Enum.TextXAlignment.Center
+TogLbl.BorderSizePixel = 0
+
+-- Drag toggle button
+do
+    local drag, ds, sp = false
+    TogBtn.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            drag=true; ds=inp.Position; sp=TogBtn.Position
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then drag=false end
+    end)
+    UserInputService.InputChanged:Connect(function(inp)
+        if drag and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = inp.Position - ds
+            TogBtn.Position = UDim2.new(sp.X.Scale, sp.X.Offset+d.X, sp.Y.Scale, sp.Y.Offset+d.Y)
+        end
+    end)
+end
+
+-- ─── Main Frame (380px wide, SHARP rectangle) ────────────────
+local Main = Instance.new("Frame", GUI)
+Main.Name             = "MainFrame"
+Main.Size             = UDim2.fromOffset(380, 500)
+Main.Position         = UDim2.new(0.5, -190, 0.5, -250)
+Main.BackgroundColor3 = CL.BG
+Main.BorderSizePixel  = 0  -- sharp
+MkStroke(Main, CL.BORDER, 1)
+
+-- ─── Top bar ─────────────────────────────────────────────────
+local TopBar = Instance.new("Frame", Main)
+TopBar.Size             = UDim2.new(1, 0, 0, 36)
+TopBar.BackgroundColor3 = CL.PANEL
+TopBar.BorderSizePixel  = 0  -- sharp
+
+-- Rainbow gradient bar on very top (w7w7 style)
+local RainbowBar = Instance.new("Frame", TopBar)
+RainbowBar.Size             = UDim2.new(1, 0, 0, 2)
+RainbowBar.BackgroundColor3 = Color3.new(1, 0, 0)
+RainbowBar.BorderSizePixel  = 0
+local RbGrad = Instance.new("UIGradient", RainbowBar)
+RbGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,   Color3.new(1,   0,   0)),
+    ColorSequenceKeypoint.new(0.25, Color3.new(1,   0.5, 0)),
+    ColorSequenceKeypoint.new(0.5, Color3.new(0.5, 0,   1)),
+    ColorSequenceKeypoint.new(0.75, Color3.new(0,   0.5, 1)),
+    ColorSequenceKeypoint.new(1,   Color3.new(0,   1,   0.5)),
+})
+
+RunService.RenderStepped:Connect(function()
+    RbGrad.Offset = Vector2.new(math.sin(tick() * 0.8) * 0.5, 0)
+end)
+
+local TitleLabel = Instance.new("TextLabel", TopBar)
+TitleLabel.Size            = UDim2.new(1, -78, 1, 0)
+TitleLabel.Position        = UDim2.fromOffset(10, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text            = "◈  CLYAZ RAGEBOT v2"
+TitleLabel.TextColor3      = CL.ACC
+TitleLabel.TextSize        = 13
+TitleLabel.Font            = Enum.Font.GothamBold
+TitleLabel.TextXAlignment  = Enum.TextXAlignment.Left
+TitleLabel.BorderSizePixel = 0
+
+-- Hide button
+local HideBtn = Instance.new("TextButton", TopBar)
+HideBtn.Size             = UDim2.fromOffset(28, 26)
+HideBtn.Position         = UDim2.fromOffset(314, 5)
+HideBtn.BackgroundColor3 = CL.ELEM2
+HideBtn.BorderSizePixel  = 0  -- sharp
+HideBtn.Text             = "−"
+HideBtn.TextColor3       = CL.DIM
+HideBtn.TextSize         = 15
+HideBtn.Font             = Enum.Font.GothamBold
+MkStroke(HideBtn, CL.BORDER, 1)
+
+local ContentWrapper = Instance.new("Frame", Main)
+ContentWrapper.Size             = UDim2.new(1, 0, 1, -36)
+ContentWrapper.Position         = UDim2.fromOffset(0, 36)
+ContentWrapper.BackgroundTransparency = 1
+ContentWrapper.BorderSizePixel  = 0
+
+HideBtn.MouseEnter:Connect(function() Tw(HideBtn, {TextColor3=CL.YELLOW}) end)
+HideBtn.MouseLeave:Connect(function() Tw(HideBtn, {TextColor3=CL.DIM}) end)
+HideBtn.MouseButton1Click:Connect(function()
+    ContentWrapper.Visible = not ContentWrapper.Visible
+    Main.Size = ContentWrapper.Visible
+        and UDim2.fromOffset(380, 500)
+        or  UDim2.fromOffset(380, 36)
+    HideBtn.Text = ContentWrapper.Visible and "−" or "+"
+end)
+
+-- Close button
+local CloseBtn = Instance.new("TextButton", TopBar)
+CloseBtn.Size             = UDim2.fromOffset(28, 26)
+CloseBtn.Position         = UDim2.fromOffset(346, 5)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
+CloseBtn.BorderSizePixel  = 0  -- sharp
+CloseBtn.Text             = "✕"
+CloseBtn.TextColor3       = Color3.new(1, 1, 1)
+CloseBtn.TextSize         = 12
+CloseBtn.Font             = Enum.Font.GothamBold
+MkStroke(CloseBtn, Color3.fromRGB(220, 60, 60), 1)
+CloseBtn.MouseEnter:Connect(function() Tw(CloseBtn, {BackgroundColor3=CL.RED}) end)
+CloseBtn.MouseLeave:Connect(function() Tw(CloseBtn, {BackgroundColor3=Color3.fromRGB(160,40,40)}) end)
+CloseBtn.MouseButton1Click:Connect(function() GUI:Destroy() end)
+
+-- Drag main frame by topbar
+do
+    local drag, ds, sp = false
+    TopBar.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            drag=true; ds=inp.Position; sp=Main.Position
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then drag=false end
+    end)
+    UserInputService.InputChanged:Connect(function(inp)
+        if drag and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = inp.Position - ds
+            Main.Position = UDim2.new(sp.X.Scale, sp.X.Offset+d.X, sp.Y.Scale, sp.Y.Offset+d.Y)
+        end
+    end)
+end
+
+-- Toggle button click
+TogBtn.InputBegan:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+        Main.Visible = not Main.Visible
+    end
+end)
+UserInputService.InputBegan:Connect(function(inp, gp)
+    if gp then return end
+    if inp.KeyCode == Enum.KeyCode.RightShift then
+        Main.Visible = not Main.Visible
+    end
+end)
+
+-- ─── Scroll Content ──────────────────────────────────────────
+local ScrollArea = Instance.new("ScrollingFrame", ContentWrapper)
+ScrollArea.Size                  = UDim2.new(1, 0, 1, 0)
+ScrollArea.BackgroundTransparency= 1
+ScrollArea.BorderSizePixel       = 0
+ScrollArea.ScrollBarThickness    = 3
+ScrollArea.ScrollBarImageColor3  = CL.BORDER
+ScrollArea.AutomaticCanvasSize   = Enum.AutomaticSize.Y
+ScrollArea.CanvasSize            = UDim2.new(0, 0, 0, 0)
+ScrollArea.ScrollingDirection    = Enum.ScrollingDirection.Y
+
+local ContentList = Instance.new("UIListLayout", ScrollArea)
+ContentList.SortOrder  = Enum.SortOrder.LayoutOrder
+ContentList.Padding    = UDim.new(0, 4)
+ContentList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+local ContentPad = Instance.new("UIPadding", ScrollArea)
+ContentPad.PaddingTop    = UDim.new(0, 8)
+ContentPad.PaddingBottom = UDim.new(0, 8)
+ContentPad.PaddingLeft   = UDim.new(0, 8)
+ContentPad.PaddingRight  = UDim.new(0, 8)
+
+-- ─── UI builder helpers ───────────────────────────────────────
+local rowOrder = 0
+local function NextOrder() rowOrder = rowOrder + 1; return rowOrder end
+
+local function SectionHdr(text)
+    local f = Instance.new("Frame", ScrollArea)
+    f.Size             = UDim2.new(1, -16, 0, 20)
+    f.BackgroundTransparency = 1
+    f.BorderSizePixel  = 0
+    f.LayoutOrder      = NextOrder()
+
+    local line = Instance.new("Frame", f)
+    line.Size             = UDim2.new(1, 0, 0, 1)
+    line.Position         = UDim2.new(0, 0, 0.5, 0)
+    line.BackgroundColor3 = CL.BORDER
+    line.BorderSizePixel  = 0
+
+    local bg = Instance.new("Frame", f)
+    bg.Size               = UDim2.fromOffset(#text * 7 + 10, 18)
+    bg.Position           = UDim2.fromOffset(8, 1)
+    bg.BackgroundColor3   = CL.BG
+    bg.BorderSizePixel    = 0
+
+    local tx = Instance.new("TextLabel", bg)
+    tx.Size               = UDim2.new(1, 0, 1, 0)
+    tx.BackgroundTransparency = 1
+    tx.Text               = text
+    tx.TextColor3         = CL.ACC
+    tx.TextSize           = 10
+    tx.Font               = Enum.Font.GothamBold
+    tx.TextXAlignment     = Enum.TextXAlignment.Left
+    tx.BorderSizePixel    = 0
+end
+
+-- Toggle row (sharp, no corner radius)
+local function MkToggle(labelText, default, onChange)
+    local row = Instance.new("Frame", ScrollArea)
+    row.Size             = UDim2.new(1, -16, 0, 34)
+    row.BackgroundColor3 = CL.ELEM
+    row.BorderSizePixel  = 0  -- sharp
+    row.LayoutOrder      = NextOrder()
+    MkStroke(row, CL.BORDER, 1)
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size            = UDim2.new(1, -50, 1, 0)
+    lbl.Position        = UDim2.fromOffset(10, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text            = labelText
+    lbl.TextColor3      = CL.TEXT
+    lbl.TextSize        = 12
+    lbl.Font            = Enum.Font.GothamBold
+    lbl.TextXAlignment  = Enum.TextXAlignment.Left
+    lbl.BorderSizePixel = 0
+
+    -- Indicator dot
+    local dot = Instance.new("Frame", row)
+    dot.Size             = UDim2.fromOffset(10, 10)
+    dot.Position         = UDim2.new(1, -44, 0.5, -5)
+    dot.BackgroundColor3 = default and CL.GREEN or CL.RED
+    dot.BorderSizePixel  = 0  -- sharp
+    MkStroke(dot, default and Color3.fromRGB(30,160,60) or Color3.fromRGB(160,30,30), 1)
+
+    local statusTx = Instance.new("TextLabel", row)
+    statusTx.Size            = UDim2.fromOffset(28, 14)
+    statusTx.Position        = UDim2.new(1, -32, 0.5, -7)
+    statusTx.BackgroundTransparency = 1
+    statusTx.Text            = default and "ON" or "OFF"
+    statusTx.TextColor3      = default and CL.GREEN or CL.DIM
+    statusTx.TextSize        = 10
+    statusTx.Font            = Enum.Font.GothamBold
+    statusTx.TextXAlignment  = Enum.TextXAlignment.Center
+    statusTx.BorderSizePixel = 0
+
+    local val = default
+    local function Set(v)
+        val = v
+        Tw(dot,      {BackgroundColor3 = v and CL.GREEN or CL.RED})
+        Tw(statusTx, {TextColor3       = v and CL.GREEN or CL.DIM})
+        statusTx.Text = v and "ON" or "OFF"
+        if onChange then onChange(v) end
+    end
+
+    row.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then Set(not val) end
+    end)
+    row.MouseEnter:Connect(function() Tw(row, {BackgroundColor3=CL.ELEM2}) end)
+    row.MouseLeave:Connect(function() Tw(row, {BackgroundColor3=CL.ELEM}) end)
+
+    return Set
+end
+
+-- Slider row (sharp, no corner radius)
+local function MkSlider(labelText, minV, maxV, defaultV, onChange, isFloat)
+    local row = Instance.new("Frame", ScrollArea)
+    row.Size             = UDim2.new(1, -16, 0, 48)
+    row.BackgroundColor3 = CL.ELEM
+    row.BorderSizePixel  = 0  -- sharp
+    row.LayoutOrder      = NextOrder()
+    MkStroke(row, CL.BORDER, 1)
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size            = UDim2.new(0.65, 0, 0, 20)
+    lbl.Position        = UDim2.fromOffset(10, 4)
+    lbl.BackgroundTransparency = 1
+    lbl.Text            = labelText
+    lbl.TextColor3      = CL.TEXT
+    lbl.TextSize        = 12
+    lbl.Font            = Enum.Font.GothamBold
+    lbl.TextXAlignment  = Enum.TextXAlignment.Left
+    lbl.BorderSizePixel = 0
+
+    local valLbl = Instance.new("TextLabel", row)
+    valLbl.Size            = UDim2.new(0.35, -10, 0, 20)
+    valLbl.Position        = UDim2.new(0.65, 0, 0, 4)
+    valLbl.BackgroundTransparency = 1
+    valLbl.Text            = isFloat and string.format("%.2f", defaultV) or tostring(defaultV)
+    valLbl.TextColor3      = CL.ACC
+    valLbl.TextSize        = 11
+    valLbl.Font            = Enum.Font.GothamBold
+    valLbl.TextXAlignment  = Enum.TextXAlignment.Right
+    valLbl.BorderSizePixel = 0
+
+    local track = Instance.new("Frame", row)
+    track.Size             = UDim2.new(1, -20, 0, 4)
+    track.Position         = UDim2.fromOffset(10, 32)
+    track.BackgroundColor3 = CL.ELEM2
+    track.BorderSizePixel  = 0  -- sharp
+
+    local fillPct = (defaultV - minV) / (maxV - minV)
+    local fill = Instance.new("Frame", track)
+    fill.Size             = UDim2.new(fillPct, 0, 1, 0)
+    fill.BackgroundColor3 = CL.ACC
+    fill.BorderSizePixel  = 0
+
+    local thumb = Instance.new("Frame", track)
+    thumb.Size             = UDim2.fromOffset(10, 14)
+    thumb.Position         = UDim2.new(fillPct, -5, 0.5, -7)
+    thumb.BackgroundColor3 = CL.ACCLIT
+    thumb.BorderSizePixel  = 0  -- sharp
+
+    local curVal = defaultV
+    local dragging = false
+
+    local function Update(px)
+        local abs = track.AbsolutePosition
+        local sz  = track.AbsoluteSize
+        local pct = math.clamp((px - abs.X) / sz.X, 0, 1)
+        if isFloat then
+            curVal = math.floor((minV + (maxV-minV)*pct) * 100 + 0.5) / 100
+        else
+            curVal = math.round(minV + (maxV-minV)*pct)
+        end
+        fill.Size      = UDim2.new(pct, 0, 1, 0)
+        thumb.Position = UDim2.new(pct, -5, 0.5, -7)
+        valLbl.Text    = isFloat and string.format("%.2f", curVal) or tostring(curVal)
+        if onChange then onChange(curVal) end
+    end
+
+    thumb.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging=true end
+    end)
+    track.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging=true; Update(inp.Position.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging=false end
+    end)
+    UserInputService.InputChanged:Connect(function(inp)
+        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            Update(inp.Position.X)
+        end
+    end)
+
+    row.MouseEnter:Connect(function() Tw(row, {BackgroundColor3=CL.ELEM2}) end)
+    row.MouseLeave:Connect(function() Tw(row, {BackgroundColor3=CL.ELEM}) end)
+end
+
+-- Dropdown row (sharp)
+local function MkDropdown(labelText, options, default, onChange)
+    local openPanel = nil
+
+    local row = Instance.new("Frame", ScrollArea)
+    row.Size             = UDim2.new(1, -16, 0, 34)
+    row.BackgroundColor3 = CL.ELEM
+    row.BorderSizePixel  = 0
+    row.LayoutOrder      = NextOrder()
+    row.ClipsDescendants = false
+    MkStroke(row, CL.BORDER, 1)
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size            = UDim2.new(0.5, 0, 1, 0)
+    lbl.Position        = UDim2.fromOffset(10, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text            = labelText
+    lbl.TextColor3      = CL.TEXT
+    lbl.TextSize        = 12
+    lbl.Font            = Enum.Font.GothamBold
+    lbl.TextXAlignment  = Enum.TextXAlignment.Left
+    lbl.BorderSizePixel = 0
+
+    local dropBtn = Instance.new("TextButton", row)
+    dropBtn.Size             = UDim2.new(0.46, 0, 0, 24)
+    dropBtn.Position         = UDim2.new(0.52, 0, 0.5, -12)
+    dropBtn.BackgroundColor3 = CL.ELEM2
+    dropBtn.BorderSizePixel  = 0  -- sharp
+    dropBtn.Text             = default .. "  ▾"
+    dropBtn.TextColor3       = CL.ACC
+    dropBtn.TextSize         = 11
+    dropBtn.Font             = Enum.Font.GothamBold
+    dropBtn.TextXAlignment   = Enum.TextXAlignment.Center
+    MkStroke(dropBtn, CL.BORDER, 1)
+
+    local panel = Instance.new("Frame", GUI)
+    panel.BackgroundColor3 = CL.PANEL
+    panel.BorderSizePixel  = 0  -- sharp
+    panel.Size             = UDim2.fromOffset(160, #options * 28 + 6)
+    panel.ZIndex           = 50
+    panel.Visible          = false
+    MkStroke(panel, CL.ACC, 1)
+
+    local pList = Instance.new("UIListLayout", panel)
+    pList.SortOrder = Enum.SortOrder.LayoutOrder
+    pList.Padding   = UDim.new(0, 1)
+    local pPad = Instance.new("UIPadding", panel)
+    pPad.PaddingTop=UDim.new(0,3); pPad.PaddingBottom=UDim.new(0,3)
+    pPad.PaddingLeft=UDim.new(0,3); pPad.PaddingRight=UDim.new(0,3)
+
+    local curSel = default
+    for i, opt in ipairs(options) do
+        local ob = Instance.new("TextButton", panel)
+        ob.Size             = UDim2.new(1,-6,0,24)
+        ob.BackgroundColor3 = opt==curSel and CL.ELEM2 or CL.ELEM
+        ob.BorderSizePixel  = 0
+        ob.Text             = opt
+        ob.TextColor3       = opt==curSel and CL.ACC or CL.TEXT
+        ob.TextSize         = 11
+        ob.Font             = Enum.Font.GothamBold
+        ob.TextXAlignment   = Enum.TextXAlignment.Center
+        ob.ZIndex           = 51
+        ob.LayoutOrder      = i
+
+        ob.MouseEnter:Connect(function()
+            if opt~=curSel then Tw(ob,{BackgroundColor3=CL.ELEM2}) end
+        end)
+        ob.MouseLeave:Connect(function()
+            if opt~=curSel then Tw(ob,{BackgroundColor3=CL.ELEM}) end
+        end)
+        ob.MouseButton1Click:Connect(function()
+            curSel = opt
+            dropBtn.Text = opt .. "  ▾"
+            for _, c in ipairs(panel:GetChildren()) do
+                if c:IsA("TextButton") then
+                    local isSel = c.Text:gsub("  ▾","") == opt
+                    Tw(c,{BackgroundColor3 = isSel and CL.ELEM2 or CL.ELEM, TextColor3 = isSel and CL.ACC or CL.TEXT})
+                end
+            end
+            panel.Visible = false
+            if onChange then onChange(opt) end
+        end)
+    end
+
+    dropBtn.MouseButton1Click:Connect(function()
+        if panel.Visible then
+            panel.Visible = false
+        else
+            local ap = dropBtn.AbsolutePosition
+            local as = dropBtn.AbsoluteSize
+            panel.Position = UDim2.fromOffset(ap.X, ap.Y + as.Y + 2)
+            panel.Visible  = true
+        end
+    end)
+    dropBtn.MouseEnter:Connect(function() Tw(dropBtn, {BackgroundColor3=CL.ELEM}) end)
+    dropBtn.MouseLeave:Connect(function() Tw(dropBtn, {BackgroundColor3=CL.ELEM2}) end)
+end
+
+-- ─── POPULATE UI ─────────────────────────────────────────────
+
+SectionHdr("SILENT AIM")
+MkToggle("Silent Aim", Config.SilentAim, function(v)
+    Config.SilentAim = v
+end)
+MkToggle("Team Check", Config.TeamCheck, function(v)
+    Config.TeamCheck = v
+end)
+MkToggle("Wall Check", Config.WallCheck, function(v)
+    Config.WallCheck = v
+end)
+MkSlider("FOV Radius", 50, 600, Config.FOVRadius, function(v)
+    Config.FOVRadius = v
+end)
+MkDropdown("Target Part",
+    {"Auto","Head","HumanoidRootPart","UpperTorso","LowerTorso","RightHand","LeftHand"},
+    Config.TargetPart, function(v)
+    Config.TargetPart = v
+end)
+
+SectionHdr("AUTO FIRE")
+MkToggle("Auto Fire", Config.AutoFire, function(v)
+    Config.AutoFire = v
+end)
+MkToggle("Double Tap", Config.DoubleTap, function(v)
+    Config.DoubleTap = v
+end)
+MkSlider("Fire Delay (s)", 0, 0.1, Config.FireDelay, function(v)
+    Config.FireDelay = v
+end, true)
+MkSlider("Shots Per Cycle", 1, 6, Config.ShotsPerCycle, function(v)
+    Config.ShotsPerCycle = v
+end)
+
+SectionHdr("VOID / FAKE POSITION  (K8X)")
+MkToggle("Void Spam", Config.VoidEnabled, function(v)
+    Config.VoidEnabled = v
+    if not v and VoidLastPos then
+        pcall(function()
+            local char = LocalPlayer.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.CFrame = VoidLastPos
+                hrp.AssemblyLinearVelocity = Vector3.zero
+            end
+        end)
+        VoidLastPos = nil
+    end
+end)
+MkSlider("Void Rate (s)", 0.01, 0.2, Config.VoidRate, function(v)
+    Config.VoidRate = v
+end, true)
+
+SectionHdr("KICK  (Void Enemies)")
+MkToggle("Enemy Kick", Config.KickEnabled, function(v)
+    Config.KickEnabled = v
+end)
+
+SectionHdr("TP RAGE")
+MkToggle("TP Rage", Config.TPEnabled, function(v)
+    Config.TPEnabled = v
+end)
+MkSlider("TP Interval (s)", 0.3, 3, Config.TPInterval, function(v)
+    Config.TPInterval = v
+end, true)
+
+SectionHdr("BACKTRACK")
+MkToggle("Backtrack", Config.BacktrackEnabled, function(v)
+    Config.BacktrackEnabled = v
+    if not v then BacktrackCache = {} end
+end)
+MkSlider("Duration (s)", 0.05, 0.25, Config.BacktrackDuration, function(v)
+    Config.BacktrackDuration = v
+end, true)
+
+SectionHdr("ANTI-UE COUNTER")
+MkToggle("Anti-UE", Config.AntiUEEnabled, function(v)
+    Config.AntiUEEnabled = v
+end)
+MkSlider("Y Distance", 100, 2000, Config.AntiUEY, function(v)
+    Config.AntiUEY = v
+end)
+MkSlider("Cooldown (s)", 0.05, 1, Config.AntiUECooldown, function(v)
+    Config.AntiUECooldown = v
+end, true)
+
+SectionHdr("SKYBOX")
+MkDropdown("Skybox", {"Default","Nebula","Night"}, Config.SkyboxMode, function(v)
+    Config.SkyboxMode = v
+    if v == "Default" then
+        ResetSkybox()
+    else
+        ApplySkybox(v)
+    end
+end)
+
+SectionHdr("STRETCH SCREEN")
+MkToggle("Stretch Enabled", Config.StretchEnabled, function(v)
+    Config.StretchEnabled = v
+    if v then EnableStretch() else DisableStretch() end
+end)
+MkSlider("Stretch Ratio", 0.5, 1, Config.StretchRatio, function(v)
+    Config.StretchRatio = v
+end, true)
+
+SectionHdr("VISUALS")
+MkToggle("Show FOV Circle", Config.ShowFOVCircle, function(v)
+    Config.ShowFOVCircle = v
+end)
+MkToggle("Show Target HUD", Config.ShowTargetHUD, function(v)
+    Config.ShowTargetHUD = v
+end)
+MkToggle("Show Y Coord", Config.ShowYCoord, function(v)
+    Config.ShowYCoord = v
+end)
+
+-- ─── Status label at bottom of UI ────────────────────────────
+local StatusBar = Instance.new("Frame", ContentWrapper)
+StatusBar.Size             = UDim2.new(1, 0, 0, 22)
+StatusBar.AnchorPoint      = Vector2.new(0, 1)
+StatusBar.Position         = UDim2.new(0, 0, 1, 0)
+StatusBar.BackgroundColor3 = CL.PANEL
+StatusBar.BorderSizePixel  = 0
+MkStroke(StatusBar, CL.BORDER, 1)
+
+local StatusLabel = Instance.new("TextLabel", StatusBar)
+StatusLabel.Size            = UDim2.new(1, -8, 1, 0)
+StatusLabel.Position        = UDim2.fromOffset(8, 0)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.TextColor3      = CL.DIM
+StatusLabel.TextSize        = 10
+StatusLabel.Font            = Enum.Font.Gotham
+StatusLabel.TextXAlignment  = Enum.TextXAlignment.Left
+StatusLabel.BorderSizePixel = 0
+
+-- Live status update
+RunService.RenderStepped:Connect(function()
+    if AimTarget then
+        local char = AimTarget.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        local hp   = hum and math.floor(hum.Health) or 0
+        StatusLabel.Text      = "🔴 LOCKED: " .. AimTarget.Name .. "  |  HP: " .. hp
+        StatusLabel.TextColor3= Color3.fromRGB(255, 80, 80)
+    else
+        StatusLabel.Text      = "● SEARCHING...  |  Toggle: RightShift"
+        StatusLabel.TextColor3= CL.DIM
+    end
+end)
+
+print("[Clyaz Ragebot v2] Loaded. Toggle: RightShift")
